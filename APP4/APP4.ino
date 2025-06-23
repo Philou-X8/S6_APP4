@@ -144,6 +144,32 @@ void MakeManchester(byte* payload_w){
 
 
 //-----------------------------------------
+//-------------- Interrupt ----------------
+//-----------------------------------------
+
+byte read_arr[87];
+volatile byte read_buff;
+volatile byte read_index;
+volatile byte last_read_delay = 0; // "time" elapsed since last valid bit
+unsigned int read_min_delay = 10; // minimum amount of "time" to wait before a read becomes valid
+void InterruptRise(){
+  if(last_read_delay > read_min_delay){
+    read_buff = read_buff | (0x1 << read_index); // force a 1 at read_index
+    read_index++;
+    last_read_delay = 0;
+  }
+}
+
+void InterruptFall(){
+  if(last_read_delay > read_min_delay){
+    read_buff = read_buff & ~(0x1 << read_index); // force a 0 at read_index
+    read_index++;
+    last_read_delay = 0;
+  }
+  
+}
+
+//-----------------------------------------
 //--------------- Tasks -------------------
 //-----------------------------------------
 
