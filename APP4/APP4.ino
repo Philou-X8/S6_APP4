@@ -1,4 +1,6 @@
+
 #include "esp_task_wdt.h"
+#include "soc/gpio_struct.h"
 
 #define CRC_MASK 0x1021  // CRC-16-CCITT
 
@@ -10,13 +12,15 @@
 #define SEND_PIN 25
 #define READ_PIN 26
 
-hw_timer_t *timer = NULL;
+//hw_timer_t *timer = NULL;
 //wdt_hal_context_t rtc_wdt_ctx = RWDT_HAL_CONTEXT_DEFAULT();
 
-void TaskTransmit(void *pvParameters);
-void TaskReceive(void *pvParameters);
 
 char payload[176] = { 0 };
+void TaskReceive(void *pvParameters);
+/*
+void TaskTransmit(void *pvParameters);
+
 
 void setup() {
   Serial.begin(115200);
@@ -26,6 +30,7 @@ void setup() {
   // Build hardcoded payload
   //
 
+  //GPIO.out;
 
   xTaskCreate(
     TaskTransmit, "Send data thread",
@@ -93,10 +98,12 @@ void loop() {
 void TestInterrupt() {
   test_counter++;
 }
+*/
+
 //-----------------------------------------
 //------------- Functions -----------------
 //-----------------------------------------
-
+/*
 static inline void ComputeCRC(char *payload_w) {
   const int start_i = 10;  // data payload start at byte 5*2=10
   const int end_i = 170;   // data payload end at byte 85*2=170
@@ -253,7 +260,7 @@ static inline void LoadMessage(char *payload_w, char *message) {
   ComputeCRC(payload_w);
   MakeManchester(payload_w);
 }
-
+*/
 //-----------------------------------------
 //-------------- Interrupt ----------------
 //-----------------------------------------
@@ -265,22 +272,34 @@ static inline void LoadMessage(char *payload_w, char *message) {
 //unsigned int read_min_delay = 10; // minimum amount of "time" to wait before a read becomes valid
 
 
-
+/*
 volatile int write_bit_index = 0;
 void ARDUINO_ISR_ATTR SendBit() {
 
   int byte_index = (write_bit_index >> 3);  // last 3 bits are used to count the bit position
   int bit_index = (write_bit_index & 0x7);  // 0b0111
   // ((payload[byte_index] >> bit_index) & 0x1)
-  /*
-  Serial.print("Sending byte [");
-  Serial.print(byte_index);
-  Serial.print("] and bit [");
-  Serial.print(bit_index);
-  Serial.print("] of value: ");
-  Serial.println((payload[byte_index] >> (8-bit_index)) & 0x1);
-  */
-  digitalWrite(SEND_PIN, ((payload[byte_index] >> (7-bit_index)) & 0x1));
+  
+  //Serial.print("Sending byte [");
+  //Serial.print(byte_index);
+  //Serial.print("] and bit [");
+  //Serial.print(bit_index);
+  //Serial.print("] of value: ");
+  //Serial.println((payload[byte_index] >> (8-bit_index)) & 0x1);
+  
+
+  if((payload[byte_index] >> (7-bit_index)) & 0x1){
+    //Serial.println("trying to write 1:");
+    GPIO.out_w1ts = (0x1 << SEND_PIN);
+    //Serial.println(GPIO.out);
+  }
+  else{
+    //Serial.println("trying to write 0:");
+    GPIO.out_w1tc = (0x1 << SEND_PIN);
+    //Serial.println(GPIO.out);
+  }
+  
+  //digitalWrite(SEND_PIN, ((payload[byte_index] >> (7-bit_index)) & 0x1));
 
   write_bit_index += 1;
 }
@@ -289,6 +308,7 @@ void ARDUINO_ISR_ATTR SendBit() {
 //--------------- Tasks -------------------
 //-----------------------------------------
 
+#define W_SPEED 500
 void TaskTransmit(void *pvParameters) {
   char *a_payload = (char *)pvParameters;
 
@@ -301,7 +321,7 @@ void TaskTransmit(void *pvParameters) {
 
   // Set alarm to call onTimer function every second (value in microseconds).
   // Repeat the alarm (third parameter) with unlimited count = 0 (fourth parameter).
-  timerAlarm(timer, 10 * 1000, false, 0);
+  timerAlarm(timer, W_SPEED * 1000, false, 0);
 
   int isMessageReady = 0;
   int isTimerEnabled = 0;
@@ -321,7 +341,7 @@ void TaskTransmit(void *pvParameters) {
     if (isMessageReady) {
       if (isTimerEnabled == 0) {
         timerRestart(timer);
-        timerAlarm(timer, 100 * 1000, true, 1408);  // 176 * 8 = 1408
+        timerAlarm(timer, W_SPEED * 1000, true, 1408);  // 176 * 8 = 1408
         isTimerEnabled = 1;
       }
 
@@ -330,7 +350,7 @@ void TaskTransmit(void *pvParameters) {
 
         Serial.println("done sending message");
         isMessageReady = 0;
-        timerAlarm(timer, 10 * 1000, false, 0);
+        timerAlarm(timer, W_SPEED * 1000, false, 0);
         isTimerEnabled = 0;
         write_bit_index = 0;
 
@@ -338,7 +358,7 @@ void TaskTransmit(void *pvParameters) {
       }
 
     } else {
-      char placeholder[80] = "testing message.";
+      char placeholder[80] = "This is a testing message. It doesnt mean anything, it just need to use 80 char";
 
       LoadMessage(a_payload, placeholder);
 
@@ -352,8 +372,11 @@ void TaskTransmit(void *pvParameters) {
     delay(1);  // prevent watchdog from freaking out
   }
 }
+*/
 
 
+
+/*
 volatile int callibrate_counter = 0;
 volatile unsigned long calib_start = 0;
 volatile unsigned long calib_end = 0;
@@ -534,23 +557,6 @@ void TaskReceive(void *pvParameters) {
     }
 
 
-
-
-    
-
-    /*
-    switch(activeMode){
-      default: // idle state
-        
-      break;
-      case 1:
-        if(callibrate_counter >= 4){
-          // compute time spent recieving the header
-          activeMode = 2;
-          // attach and detach interrupt
-        }
-      break;
-    }
-    */
   }
 }
+*/

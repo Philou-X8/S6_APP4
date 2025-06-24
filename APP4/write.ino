@@ -1,0 +1,273 @@
+
+#define CRC_MASK 0x1021  // CRC-16-CCITT
+
+#define TANSMIT_CORE 0
+#define RECEIVE_CORE 1
+
+#define SEND_PIN 25
+#define READ_PIN 26
+
+#define WRITE_SPEED 14 // time in us. (micro sec)
+
+
+volatile int write_bit_index = 0;
+
+volatile SemaphoreHandle_t writerSemaphore;
+portMUX_TYPE sendBitMUX = portMUX_INITIALIZER_UNLOCKED;
+
+
+//-----------------------------------------
+//--------------- Tasks -------------------
+//-----------------------------------------
+
+void TaskTransmit(void *pvParameters) {
+  char *a_payload = (char *)pvParameters;
+
+  digitalWrite(SEND_PIN, 0);
+
+  writerSemaphore = xSemaphoreCreateBinary();
+  // Set timer frequency to 1Mhz
+  timer = timerBegin(1000000);  //
+
+  timerAttachInterrupt(timer, &SendBit);
+
+  // Set alarm to call onTimer function every second (value in microseconds).
+  // Repeat the alarm (third parameter) with unlimited count = 0 (fourth parameter).
+  timerAlarm(timer, WRITE_SPEED, false, 0);
+
+  const char text_payload[80] = "This is a testing message. It doesnt mean anything, it just need to use 80 char";
+  int writer_state = 0; // wait, load, send
+  unsigned long send_timer_start = 0;
+  unsigned long send_timer_end = 0;
+
+  delay(1000);
+  while (1) {
+    delayMicroseconds(20);
+    //delay(1);  // prevent watchdog from freaking out
+
+    if(writer_state == 0){
+      //Serial.println("Ready to send message");
+      send_timer_start = micros();
+      writer_state = 1;
+      //Serial.println("WRITER STATE: 0 -> 1");
+
+    }
+    else if(writer_state == 1){
+      //Serial.println("Sending message");
+      
+      LoadMessage(a_payload, text_payload);
+      timerRestart(timer);
+      timerAlarm(timer, WRITE_SPEED, true, 0);  // 176 byte * 8 bits = 1408 bits
+
+      Serial.println(micros() - send_timer_start);
+      writer_state = 2;
+      //Serial.println("WRITER STATE: 1 -> 2");
+    }
+    else if(writer_state == 2){
+
+      if (xSemaphoreTake(writerSemaphore, 0) == pdTRUE){
+        timerAlarm(timer, WRITE_SPEED, false, 0);
+        //write_bit_index = 0;
+        writer_state = 3;
+        //Serial.println("WRITER STATE: 2 -> 3");
+      }
+
+      //if (write_bit_index >= 1408){
+      //  timerAlarm(timer, WRITE_SPEED, false, 0);
+      //  write_bit_index = 0;
+      //  writer_state = 3;
+      //  //Serial.println("WRITER STATE: 2 -> 3");
+      //}
+    }
+    else if(writer_state == 3){
+      send_timer_end = micros();
+
+      timerAlarm(timer, WRITE_SPEED, false, 0);
+
+      //Serial.print("Message done sending in ");
+      //Serial.print(send_timer_end - send_timer_start);
+      //Serial.println(" us.");
+
+      digitalWrite(SEND_PIN, 0);
+
+      delay(5000);
+
+      writer_state = 0;
+      Serial.println("WRITER STATE: 3 -> 0");
+    }
+
+
+  }
+}
+
+
+//-----------------------------------------
+//-------------- Interrupt ----------------
+//-----------------------------------------
+
+void ARDUINO_ISR_ATTR SendBit() {
+  // mutex start
+  int byte_index = (write_bit_index >> 3);  // last 3 bits are used to count the bit position
+  int bit_index = (write_bit_index & 0x7);  // 0b0111
+  write_bit_index++;
+  // mutex end
+
+  if((g_payload[byte_index] >> (7-bit_index)) & 0x1){
+    GPIO.out_w1ts = (0x1 << SEND_PIN);
+    //Serial.println("writing bit 1");
+  }
+  else{
+    GPIO.out_w1tc = (0x1 << SEND_PIN);
+    //Serial.println("writing bit 0");
+  }
+
+  if(write_bit_index > 1408){
+    write_bit_index = 0;
+    xSemaphoreGiveFromISR(writerSemaphore, NULL);
+  }
+}
+
+
+
+//-----------------------------------------
+//------------- Functions -----------------
+//-----------------------------------------
+
+static inline void InitializePayload(char *payload_w){
+
+}
+
+static inline void ComputeCRC(char *payload_w) {
+  const int start_i = 10;  // data payload start at byte 5*2=10
+  const int end_i = 170;   // data payload end at byte 85*2=170
+  unsigned short crc = 0;
+
+  for (int i = start_i; i < end_i; i += 2) {
+    crc = crc ^ (payload_w[i] << 8);
+
+    for (int b = 0; b < 8; b++) {
+
+      if (crc & 0x8000) {
+        crc = (crc << 1) ^ CRC_MASK;
+      } else {
+        crc = (crc << 1);
+      }
+    }
+  }
+  payload_w[end_i + 0] = crc >> 8;
+  payload_w[end_i + 2] = crc & 0xFFFF;
+}
+
+
+static inline void MakeManchester(char *payload_w) {
+  const int start_i = 10;     // data payload start at byte 5*2=10
+  const int end_i = 168;      // data payload end at byte (85-1)*2=168
+  const int crc_end_i = 172;  // data payload end at byte 85*2=170
+
+  char read_buffer = 0;
+  for (int i = start_i; i <= crc_end_i; i += 2) {
+    read_buffer = payload_w[i];
+    //read_buffer = 0x5a;
+    //std::cout << "manch buff: " << PrintByte(read_buffer) << std::endl;
+
+    payload_w[i] = ((read_buffer & 0x80 ^ 0x80) >> 0)
+                   | ((read_buffer & 0x80) >> 1)
+                   | ((read_buffer & 0x40 ^ 0x40) >> 1)
+                   | ((read_buffer & 0x40) >> 2)
+
+                   | ((read_buffer & 0x20 ^ 0x20) >> 2)
+                   | ((read_buffer & 0x20) >> 3)
+                   | ((read_buffer & 0x10 ^ 0x10) >> 3)
+                   | ((read_buffer & 0x10) >> 4);
+
+    payload_w[i + 1] = ((read_buffer & 0x08 ^ 0x08) << 4)
+                       | ((read_buffer & 0x08) << 3)
+                       | ((read_buffer & 0x04 ^ 0x04) << 3)
+                       | ((read_buffer & 0x04) << 2)
+
+                       | ((read_buffer & 0x02 ^ 0x02) << 2)
+                       | ((read_buffer & 0x02) << 1)
+                       | ((read_buffer & 0x01 ^ 0x01) << 1)
+                       | ((read_buffer & 0x01) << 0);
+
+    //std::cout << PrintByte(payload_w[i]) << " " << PrintByte(payload_w[i + 1]) << std::endl;
+  }
+}
+
+
+static inline void MakeManchester(char *payload_w, int index) {
+
+  char read_buffer = payload_w[index];
+
+  //std::cout << "manch buff: " << PrintByte(read_buffer) << std::endl;
+
+  payload_w[index] = ((read_buffer & 0x80 ^ 0x80) >> 0)
+                     | ((read_buffer & 0x80) >> 1)
+                     | ((read_buffer & 0x40 ^ 0x40) >> 1)
+                     | ((read_buffer & 0x40) >> 2)
+
+                     | ((read_buffer & 0x20 ^ 0x20) >> 2)
+                     | ((read_buffer & 0x20) >> 3)
+                     | ((read_buffer & 0x10 ^ 0x10) >> 3)
+                     | ((read_buffer & 0x10) >> 4);
+
+  payload_w[index + 1] = ((read_buffer & 0x08 ^ 0x08) << 4)
+                         | ((read_buffer & 0x08) << 3)
+                         | ((read_buffer & 0x04 ^ 0x04) << 3)
+                         | ((read_buffer & 0x04) << 2)
+
+                         | ((read_buffer & 0x02 ^ 0x02) << 2)
+                         | ((read_buffer & 0x02) << 1)
+                         | ((read_buffer & 0x01 ^ 0x01) << 1)
+                         | ((read_buffer & 0x01) << 0);
+
+  //std::cout << PrintByte(payload_w[index]) << " " << PrintByte(payload_w[index + 1]) << std::endl;
+}
+
+
+static inline int InsertedWrite(char *payload_w) {
+  //unsigned start_t = 0;
+  //unsigned end_t = 0;
+
+  //start_t = __rdtsc();
+  unsigned short crc = 0;
+  payload_w[0] = 0x55;
+  payload_w[2] = 0x7E;    // start
+  payload_w[4] = 0x00;    // type
+  payload_w[6] = 0x00;    // flag
+  payload_w[8] = 80;      // lenght
+  payload_w[170] = 0x00;  // clear CRC byte
+  payload_w[172] = 0x00;  // clear CRC byte
+  payload_w[174] = 0x7E;  // end
+  for (int i = 0; i < 176; i += 2) {
+    if (i >= 10 && i < 170) {
+      // compute CRC
+      crc = crc ^ (payload_w[i] << 8);
+      for (int b = 0; b < 8; b++) {
+
+        if (crc & 0x8000) {
+          crc = (crc << 1) ^ 0x1021;
+        } else {
+          crc = (crc << 1);
+        }
+      }
+
+    } else if (i == 170) {
+      payload_w[i] = crc >> 8;
+    } else if (i == 172) {
+      payload_w[i] = crc & 0xFFFF;
+    }
+    MakeManchester(payload_w, i);
+  }
+  //end_t = __rdtsc();
+  return crc;
+}
+
+
+static inline void LoadMessage(char *payload_w, const char *message) {
+  for (int i = 0; i < 80; i++) {
+    payload_w[(i + 5) * 2] = message[i];
+  }
+  ComputeCRC(payload_w);
+  MakeManchester(payload_w);
+}
