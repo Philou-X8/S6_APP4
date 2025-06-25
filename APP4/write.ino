@@ -156,17 +156,20 @@ void TaskTransmitV2(void *pvParameters){
       a_payload[172] = manch_l;
       a_payload[173] = manch_r;
       portEXIT_CRITICAL(&sendBitMUX);
+
+      //Serial.print("CRC compute: ");
+      //Serial.println(micros() - send_timer_start);
     }
 
     byte_progress++;
 
     if (xSemaphoreTake(writerSemaphore, 0) == pdTRUE){
+      send_timer_end = micros();
       timerAlarm(timer, WRITE_SPEED, false, 0);
 
       byte_progress = 0;
       crc = 0;
         
-      send_timer_end = micros();
 
       //Serial.print("Message done sending in ");
       //Serial.print(send_timer_end - send_timer_start);
