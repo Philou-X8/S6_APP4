@@ -49,7 +49,7 @@ void TaskReceive(void *pvParameters) {
 
   //start_time = micros();
   while (1) {
-    delayMicroseconds(8);
+    delayMicroseconds(3);
     //delay(1);
 
     if (reader_state == 0) {
@@ -64,13 +64,13 @@ void TaskReceive(void *pvParameters) {
     else if (reader_state == 1) {
       // detach interrupt
       detachInterrupt(digitalPinToInterrupt(READ_PIN));
+      attachInterrupt(digitalPinToInterrupt(READ_PIN), InterruptRead, CHANGE);
 
       read_buffer = 0;
       read_buffer_size = 0;
       //message_buff = ""; // fix resetting the read buffer
       message_buff_index = 0;
 
-      attachInterrupt(digitalPinToInterrupt(READ_PIN), InterruptRead, CHANGE);
       reader_state = 2;
     } 
     else if (reader_state == 2) {
@@ -140,7 +140,7 @@ void TaskReceive(void *pvParameters) {
       Serial.print(read_timer_end - read_timer_start);
       Serial.println(" us, here's the raw message:");
       //Serial.println(String(message_buff).substring(4, 83).c_str()); // doesn't fucking work for some reason
-      Serial.println("-------------");
+      //Serial.println("-------------");
       for(int i = 3; i < 83; i++){
         //Serial.print(int(message_buff[i]));
         //Serial.print(", ");
@@ -169,9 +169,10 @@ void TaskReceive(void *pvParameters) {
       }
     }
     else if (reader_state == 6){
-      detachInterrupt(digitalPinToInterrupt(READ_PIN));
-      
       callibrate_counter = 0;
+      detachInterrupt(digitalPinToInterrupt(READ_PIN));
+      attachInterrupt(digitalPinToInterrupt(READ_PIN), InterruptSync, RISING);
+      
       read_max_delay = 0;
 
       read_buffer = 0;
@@ -179,7 +180,6 @@ void TaskReceive(void *pvParameters) {
       //total_bit_counter = 0;
       //Serial.println("READER STATE: 6 -> 0");
       
-      attachInterrupt(digitalPinToInterrupt(READ_PIN), InterruptSync, RISING);
       reader_state = 0;
     }
 
@@ -247,20 +247,26 @@ void InterruptSync() {  // must call on rising edge
   callibrate_counter += 1;
 }
 
+//volatile int pin_state = 0;
 void InterruptRead() {
 
+  //pin_state = !pin_state;
   
   if ((micros() - last_bit_time) > read_max_delay){
   //if ((timerReadMicros(read_timer) - last_bit_time) > read_max_delay){
-    last_bit_time = micros();
+    //last_bit_time = micros();
 
     // shift the read_buffer once to make room, then add the new bit to the left
     read_buffer = (read_buffer << 1) | ((GPIO.in >> READ_PIN) & 0x1);
+    //read_buffer = (read_buffer << 1) | (pin_state & 0x1);
+
+
     read_buffer_size++; // size of the read buffer
     //total_bit_counter++;
 
     if(reader_state == 2){
       if( (read_buffer & 0x7) == 0x6){
+        //pin_state = 1;
         read_buffer = 0;
         read_buffer_size = 0;
         xSemaphoreGiveFromISR(LockStartFlag, NULL);
@@ -268,7 +274,7 @@ void InterruptRead() {
     }
 
     //last_bit_time = timerReadMicros(read_timer);
-    
+    last_bit_time = micros();
 
     //((GPIO.in >> READ_PIN) & 0x1) ? Serial.println("detect 1") : Serial.println("detect 0");
   }

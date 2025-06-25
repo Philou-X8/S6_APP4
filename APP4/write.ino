@@ -179,7 +179,7 @@ void TaskTransmitV2(void *pvParameters){
       
       message_version = (message_version + 1) % 10;
       text_payload[73] = char(48 + message_version);
-      delay(5000);
+      delay(3000);
     }
 
   } // thread's While()
