@@ -7,13 +7,208 @@
 #define SEND_PIN 25
 #define READ_PIN 26
 
-#define WRITE_SPEED 14 // time in us. (micro sec)
+#define WRITE_SPEED 11 // time in us. (micro sec)
 
 
 volatile int write_bit_index = 0;
 
 volatile SemaphoreHandle_t writerSemaphore;
 portMUX_TYPE sendBitMUX = portMUX_INITIALIZER_UNLOCKED;
+
+
+void TaskTransmitV2(void *pvParameters){
+
+  char *a_payload = (char *)pvParameters;
+
+  digitalWrite(SEND_PIN, 0);
+
+  writerSemaphore = xSemaphoreCreateBinary();
+  // Set timer frequency to 1Mhz
+  timer = timerBegin(1000000);  //
+
+  timerAttachInterrupt(timer, &SendBitV2);
+
+  // Set alarm to call onTimer function every second (value in microseconds).
+  // Repeat the alarm (third parameter) with unlimited count = 0 (fourth parameter).
+  timerAlarm(timer, WRITE_SPEED, false, 0);
+
+  char text_payload[80] = "This is a testing message. It doesnt mean anything, it just need to use 80 char";
+  
+  int message_version = 0;
+  unsigned long send_timer_start = 0;
+  unsigned long send_timer_end = 0;
+
+  delay(1000);
+
+  //------------------
+
+  int byte_progress = 0;
+  unsigned short crc = 0;
+
+  // payload_w[(i + 5) * 2] = message[i];
+  send_timer_start = micros();
+  /*
+  for(int index = 0; index < 84; index++){
+     
+    if(byte_progress < 80){
+      char current_byte = text_payload[byte_progress];
+
+      // compute CRC
+      crc = crc ^ (current_byte << 8);
+      for (int b = 0; b < 8; b++) {
+
+        if (crc & 0x8000) {
+          crc = (crc << 1) ^ 0x1021;
+        } else {
+          crc = (crc << 1);
+        }
+      }
+
+      char manch_l = ManchesterLeft(byte_progress);
+      char manch_r = ManchesterRight(byte_progress);
+      
+      //Serial.print((byte_progress + 5) * 2);
+      //Serial.print(" , ");
+      //Serial.println(current_byte);
+
+      portENTER_CRITICAL(&sendBitMUX);
+      a_payload[(byte_progress + 5) * 2] = manch_l;
+      a_payload[(byte_progress + 5) * 2 + 1] = manch_r;
+      portEXIT_CRITICAL(&sendBitMUX);
+
+    }
+    else if (byte_progress == 80){
+      char manch_l = ManchesterLeft(char(crc >> 8));
+      char manch_r = ManchesterRight(char(crc >> 8));
+
+      portENTER_CRITICAL(&sendBitMUX);
+      a_payload[170] = manch_l;
+      a_payload[171] = manch_r;
+      portEXIT_CRITICAL(&sendBitMUX);
+    }
+    else if (byte_progress == 81){
+      char manch_l = ManchesterLeft(char(crc & 0xFFFF));
+      char manch_r = ManchesterRight(char(crc & 0xFFFF));
+
+      portENTER_CRITICAL(&sendBitMUX);
+      a_payload[172] = manch_l;
+      a_payload[173] = manch_r;
+      portEXIT_CRITICAL(&sendBitMUX);
+    }
+
+    byte_progress++;
+
+  }
+  byte_progress = 0;
+  crc = 0;
+  send_timer_end = micros();
+  Serial.println("-----------------\nencoding test:");
+  Serial.println(send_timer_end - send_timer_start);
+  Serial.println(text_payload);
+  Serial.println("-----------------");
+  */
+
+  while(1){
+    delayMicroseconds(WRITE_SPEED);
+
+    if(byte_progress == 0){
+      send_timer_start = micros();
+      timerAlarm(timer, WRITE_SPEED, true, 0);
+    }
+      
+    if(byte_progress < 80){
+      char current_byte = text_payload[byte_progress];
+
+      // compute CRC
+      crc = crc ^ (current_byte << 8);
+      for (int b = 0; b < 8; b++) {
+
+        if (crc & 0x8000) {
+          crc = (crc << 1) ^ 0x1021;
+        } else {
+          crc = (crc << 1);
+        }
+      }
+
+      char manch_l = ManchesterLeft(current_byte);
+      char manch_r = ManchesterRight(current_byte);
+
+      portENTER_CRITICAL(&sendBitMUX);
+      a_payload[(byte_progress + 5) * 2] = manch_l;
+      a_payload[(byte_progress + 5) * 2 + 1] = manch_r;
+      portEXIT_CRITICAL(&sendBitMUX);
+
+    }
+    else if (byte_progress == 80){
+      char manch_l = ManchesterLeft(char(crc >> 8));
+      char manch_r = ManchesterRight(char(crc >> 8));
+
+      portENTER_CRITICAL(&sendBitMUX);
+      a_payload[170] = manch_l;
+      a_payload[171] = manch_r;
+      portEXIT_CRITICAL(&sendBitMUX);
+    }
+    else if (byte_progress == 81){
+      char manch_l = ManchesterLeft(char(crc & 0xFFFF));
+      char manch_r = ManchesterRight(char(crc & 0xFFFF));
+
+      portENTER_CRITICAL(&sendBitMUX);
+      a_payload[172] = manch_l;
+      a_payload[173] = manch_r;
+      portEXIT_CRITICAL(&sendBitMUX);
+    }
+
+    byte_progress++;
+
+    if (xSemaphoreTake(writerSemaphore, 0) == pdTRUE){
+      timerAlarm(timer, WRITE_SPEED, false, 0);
+
+      byte_progress = 0;
+      crc = 0;
+        
+      send_timer_end = micros();
+
+      //Serial.print("Message done sending in ");
+      //Serial.print(send_timer_end - send_timer_start);
+      //Serial.println(" us.");
+
+      digitalWrite(SEND_PIN, 0);
+      
+      message_version = (message_version + 1) % 10;
+      text_payload[73] = char(48 + message_version);
+      delay(5000);
+    }
+
+  } // thread's While()
+  
+}
+
+void ARDUINO_ISR_ATTR SendBitV2() {
+  // mutex start
+  char data_byte = 0;
+  // mutex end
+
+  portENTER_CRITICAL(&sendBitMUX);
+  data_byte = g_payload[(write_bit_index >> 3)];
+  portEXIT_CRITICAL(&sendBitMUX);
+
+  //data_byte = 153; // TEMP ------------------------------------ FOR TESTING
+
+  if( (data_byte >> (7 - (write_bit_index & 0x7))) & 0x1 ){
+    GPIO.out_w1ts = (0x1 << SEND_PIN);
+    //Serial.println("writing bit 1");
+  }
+  else{
+    GPIO.out_w1tc = (0x1 << SEND_PIN);
+    //Serial.println("writing bit 0");
+  }
+
+  write_bit_index++;
+  if(write_bit_index > 1408){
+    write_bit_index = 0;
+    xSemaphoreGiveFromISR(writerSemaphore, NULL);
+  }
+}
 
 
 //-----------------------------------------
@@ -90,7 +285,7 @@ void TaskTransmit(void *pvParameters) {
 
       digitalWrite(SEND_PIN, 0);
 
-      delay(5000);
+      delay(3000);
 
       writer_state = 0;
       Serial.println("WRITER STATE: 3 -> 0");
@@ -224,6 +419,30 @@ static inline void MakeManchester(char *payload_w, int index) {
   //std::cout << PrintByte(payload_w[index]) << " " << PrintByte(payload_w[index + 1]) << std::endl;
 }
 
+
+static inline char ManchesterLeft(char raw){
+  return ((raw & 0x80 ^ 0x80) >> 0)
+                     | ((raw & 0x80) >> 1)
+                     | ((raw & 0x40 ^ 0x40) >> 1)
+                     | ((raw & 0x40) >> 2)
+
+                     | ((raw & 0x20 ^ 0x20) >> 2)
+                     | ((raw & 0x20) >> 3)
+                     | ((raw & 0x10 ^ 0x10) >> 3)
+                     | ((raw & 0x10) >> 4);
+}
+
+static inline char ManchesterRight(char raw){
+  return ((raw & 0x08 ^ 0x08) << 4)
+                         | ((raw & 0x08) << 3)
+                         | ((raw & 0x04 ^ 0x04) << 3)
+                         | ((raw & 0x04) << 2)
+
+                         | ((raw & 0x02 ^ 0x02) << 2)
+                         | ((raw & 0x02) << 1)
+                         | ((raw & 0x01 ^ 0x01) << 1)
+                         | ((raw & 0x01) << 0);
+}
 
 static inline int InsertedWrite(char *payload_w) {
   //unsigned start_t = 0;

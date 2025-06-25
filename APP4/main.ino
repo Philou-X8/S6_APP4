@@ -48,7 +48,7 @@ void setup() {
   // Priority
   // With task handle we will be able to manipulate with this task.
   // Core on which the task will run
-  xTaskCreatePinnedToCore(TaskTransmit, "Send data thread", 2048, g_payload, 1, NULL, TANSMIT_CORE);
+  xTaskCreatePinnedToCore(TaskTransmitV2, "Send data thread", 2048, g_payload, 1, NULL, TANSMIT_CORE);
   xTaskCreatePinnedToCore(TaskReceive, "read data thread", 2048, NULL, 2, NULL, RECEIVE_CORE);
 
 }

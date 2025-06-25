@@ -1,17 +1,23 @@
+hw_timer_t *read_timer = NULL;
 
+//read_timer = timerBegin(1000000);
+
+volatile SemaphoreHandle_t LockState_0_1;
+volatile SemaphoreHandle_t LockState_5_6;
+volatile SemaphoreHandle_t LockStartFlag;
 
 volatile int callibrate_counter = 0;
 volatile unsigned long calib_start = 0;
 volatile unsigned long calib_end = 0;
-volatile int read_priode = 0;
+//volatile int read_priode = 0;
 volatile int read_max_delay = 0;
-volatile int reader_state = 0;
 
+volatile int reader_state = 0;
 
 volatile unsigned long last_bit_time = 0;
 volatile unsigned int read_buffer = 0;
-volatile int read_buffer_size;
-volatile int total_bit_counter;
+volatile int read_buffer_size = 0;
+//volatile int total_bit_counter;
 
 //-----------------------------------------
 //--------------- Tasks -------------------
@@ -19,7 +25,16 @@ volatile int total_bit_counter;
 
 
 void TaskReceive(void *pvParameters) {
-  Serial.println("TaskReceive tread");
+  Serial.println("TaskReceive tread created");
+
+  read_timer = timerBegin(4000000);
+  //timerStart(read_timer);
+
+  LockState_0_1 = xSemaphoreCreateBinary();
+  LockState_5_6 = xSemaphoreCreateBinary();
+  LockStartFlag = xSemaphoreCreateBinary();
+
+  //int reader_state = 0;
 
   unsigned long read_timer_start = 0;
   unsigned long read_timer_end = 0;
@@ -34,13 +49,19 @@ void TaskReceive(void *pvParameters) {
 
   //start_time = micros();
   while (1) {
-    delayMicroseconds(10);
+    delayMicroseconds(8);
     //delay(1);
 
     if (reader_state == 0) {
+      if (xSemaphoreTake(LockState_0_1, 0) == pdTRUE){
+        //detachInterrupt(digitalPinToInterrupt(READ_PIN));
+        read_timer_start = micros();
+        reader_state = 1;
+      }
       read_timer_start = micros();
 
-    } else if (reader_state == 1) {
+    } 
+    else if (reader_state == 1) {
       // detach interrupt
       detachInterrupt(digitalPinToInterrupt(READ_PIN));
 
@@ -53,10 +74,18 @@ void TaskReceive(void *pvParameters) {
       reader_state = 2;
     } 
     else if (reader_state == 2) {
-      for (int i = (read_buffer_size - 3); i >= 0; i--) {
+      //int temp_buffer = read_buffer;
+      //int temp_buffer_size = read_buffer_size;
 
-        if (((read_buffer >> i) & 0x7) == 0x6) {  // search for the first instance of '110' which mark the end of the Start flag
-          read_buffer = read_buffer % (0x1 << i);
+      if (xSemaphoreTake(LockStartFlag, 0) == pdTRUE){
+        reader_state = 3;
+      }
+
+      /*
+      for (int i = (temp_buffer_size - 3); i >= 0; i--) {
+
+        if (((temp_buffer >> i) & 0x7) == 0x6) {  // search for the first instance of '110' which mark the end of the Start flag
+          read_buffer = temp_buffer % (0x1 << i);
           read_buffer_size = i;
           message_buff_index = 0;
           reader_state = 3;  // change state
@@ -64,6 +93,7 @@ void TaskReceive(void *pvParameters) {
           break;
         }
       }
+      */
 
       if (read_buffer_size >= 16) {  // start flag not found
         Serial.println("ERROR: START FLAG NOT FOUND IN MESSAGE");
@@ -91,7 +121,7 @@ void TaskReceive(void *pvParameters) {
         message_buff_index++;
       }
 
-      if (message_buff_index > 85){ // we should have all the message
+      if (message_buff_index >= 85){ // we should have all the message
         reader_state = 4;
       } 
     }
@@ -99,11 +129,12 @@ void TaskReceive(void *pvParameters) {
       // stop reading the pin
       detachInterrupt(digitalPinToInterrupt(READ_PIN));
 
+      read_timer_end = micros();
+
       if( CheckCRC(message_buff) ){
         Serial.println("CRC MISSMATCH");
       }
 
-      read_timer_end = micros();
 
       Serial.print("Transmittion complete in ");
       Serial.print(read_timer_end - read_timer_start);
@@ -111,6 +142,8 @@ void TaskReceive(void *pvParameters) {
       //Serial.println(String(message_buff).substring(4, 83).c_str()); // doesn't fucking work for some reason
       Serial.println("-------------");
       for(int i = 3; i < 83; i++){
+        //Serial.print(int(message_buff[i]));
+        //Serial.print(", ");
         Serial.print(message_buff[i]);
       }
       Serial.println("\n-------------");
@@ -121,7 +154,7 @@ void TaskReceive(void *pvParameters) {
 
       read_buffer = 0;
       read_buffer_size = 0;
-      total_bit_counter = 0;
+      //total_bit_counter = 0;
       
       //delay(1000);
 
@@ -130,7 +163,10 @@ void TaskReceive(void *pvParameters) {
       reader_state = 5; 
     }
     else if (reader_state == 5){
-      // state change done by the interrupt
+      if (xSemaphoreTake(LockState_5_6, 0) == pdTRUE){
+        //detachInterrupt(digitalPinToInterrupt(READ_PIN));
+        reader_state = 6;
+      }
     }
     else if (reader_state == 6){
       detachInterrupt(digitalPinToInterrupt(READ_PIN));
@@ -140,8 +176,8 @@ void TaskReceive(void *pvParameters) {
 
       read_buffer = 0;
       read_buffer_size = 0;
-      total_bit_counter = 0;
-      Serial.println("READER STATE: 6 -> 0");
+      //total_bit_counter = 0;
+      //Serial.println("READER STATE: 6 -> 0");
       
       attachInterrupt(digitalPinToInterrupt(READ_PIN), InterruptSync, RISING);
       reader_state = 0;
@@ -157,39 +193,82 @@ void TaskReceive(void *pvParameters) {
 //-----------------------------------------
 
 void InterruptIdle(){
+  //xSemaphoreGiveFromISR(LockState_5_6, NULL);
   reader_state = 6;
 }
-void InterruptSync() {  // must call on rising edge
+
+void InterruptSync_Old() {  // must call on rising edge
 
   if (callibrate_counter == 1) {
-    calib_start = micros();
+    calib_start = timerReadMicros(read_timer);
+    //calib_start = micros();
   } 
   else if (callibrate_counter == 3) {
-    calib_end = micros();
-    read_priode = (calib_end - calib_start);
-    read_max_delay = (read_priode >> 3) + (read_priode >> 4); // 1/8 + 1/16 = 3/16
+    calib_end = timerReadMicros(read_timer);
+    //calib_end = micros();
+
+
+    //read_priode = (calib_end - calib_start);
+    //read_max_delay = (read_priode >> 3) + (read_priode >> 4); // 1/8 + 1/16 = 3/16
     //Serial.print("read_max_delay = ");
     //Serial.println(read_max_delay);
   } 
   else if (callibrate_counter == 4) {
-    if(reader_state == 0){
+    //if(reader_state == 0){
 
       //Serial.println("changing from state 0 to state 1");
-      reader_state = 1;
-    }
+      //reader_state = 1;
+    //}
   }
 
   //Serial.println(callibrate_counter);
   callibrate_counter += 1;
 }
 
+void InterruptSync() {  // must call on rising edge
+
+  if (callibrate_counter == 1) {
+    //calib_start = timerReadMicros(read_timer);
+    calib_start = micros();
+  } 
+  
+  else if (callibrate_counter == 3) {
+    //calib_end = timerReadMicros(read_timer);
+    calib_end = micros();
+    //Serial.println(calib_end - calib_start);
+  } 
+  else if (callibrate_counter == 4) {
+    read_max_delay = ((calib_end - calib_start) >> 3) + ((calib_end - calib_start) >> 4); // + ((calib_end - calib_start) >> 6); // 1/8 + 1/16 = 3/16
+    //xSemaphoreGiveFromISR(LockState_0_1, NULL);
+    //Serial.println(read_max_delay);
+    reader_state = 1;
+  }
+
+  callibrate_counter += 1;
+}
+
 void InterruptRead() {
+
+  
   if ((micros() - last_bit_time) > read_max_delay){
+  //if ((timerReadMicros(read_timer) - last_bit_time) > read_max_delay){
+    last_bit_time = micros();
+
     // shift the read_buffer once to make room, then add the new bit to the left
     read_buffer = (read_buffer << 1) | ((GPIO.in >> READ_PIN) & 0x1);
     read_buffer_size++; // size of the read buffer
-    total_bit_counter++;
-    last_bit_time = micros();
+    //total_bit_counter++;
+
+    if(reader_state == 2){
+      if( (read_buffer & 0x7) == 0x6){
+        read_buffer = 0;
+        read_buffer_size = 0;
+        xSemaphoreGiveFromISR(LockStartFlag, NULL);
+      }
+    }
+
+    //last_bit_time = timerReadMicros(read_timer);
+    
 
     //((GPIO.in >> READ_PIN) & 0x1) ? Serial.println("detect 1") : Serial.println("detect 0");
   }
