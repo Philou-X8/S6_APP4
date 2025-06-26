@@ -16,6 +16,10 @@ volatile SemaphoreHandle_t writerSemaphore;
 portMUX_TYPE sendBitMUX = portMUX_INITIALIZER_UNLOCKED;
 
 
+//-----------------------------------------
+//--------------- Tasks -------------------
+//-----------------------------------------
+
 void TaskTransmitV2(void *pvParameters){
 
   char *a_payload = (char *)pvParameters;
@@ -45,68 +49,7 @@ void TaskTransmitV2(void *pvParameters){
   int byte_progress = 0;
   unsigned short crc = 0;
 
-  // payload_w[(i + 5) * 2] = message[i];
   send_timer_start = micros();
-  /*
-  for(int index = 0; index < 84; index++){
-     
-    if(byte_progress < 80){
-      char current_byte = text_payload[byte_progress];
-
-      // compute CRC
-      crc = crc ^ (current_byte << 8);
-      for (int b = 0; b < 8; b++) {
-
-        if (crc & 0x8000) {
-          crc = (crc << 1) ^ 0x1021;
-        } else {
-          crc = (crc << 1);
-        }
-      }
-
-      char manch_l = ManchesterLeft(byte_progress);
-      char manch_r = ManchesterRight(byte_progress);
-      
-      //Serial.print((byte_progress + 5) * 2);
-      //Serial.print(" , ");
-      //Serial.println(current_byte);
-
-      portENTER_CRITICAL(&sendBitMUX);
-      a_payload[(byte_progress + 5) * 2] = manch_l;
-      a_payload[(byte_progress + 5) * 2 + 1] = manch_r;
-      portEXIT_CRITICAL(&sendBitMUX);
-
-    }
-    else if (byte_progress == 80){
-      char manch_l = ManchesterLeft(char(crc >> 8));
-      char manch_r = ManchesterRight(char(crc >> 8));
-
-      portENTER_CRITICAL(&sendBitMUX);
-      a_payload[170] = manch_l;
-      a_payload[171] = manch_r;
-      portEXIT_CRITICAL(&sendBitMUX);
-    }
-    else if (byte_progress == 81){
-      char manch_l = ManchesterLeft(char(crc & 0xFFFF));
-      char manch_r = ManchesterRight(char(crc & 0xFFFF));
-
-      portENTER_CRITICAL(&sendBitMUX);
-      a_payload[172] = manch_l;
-      a_payload[173] = manch_r;
-      portEXIT_CRITICAL(&sendBitMUX);
-    }
-
-    byte_progress++;
-
-  }
-  byte_progress = 0;
-  crc = 0;
-  send_timer_end = micros();
-  Serial.println("-----------------\nencoding test:");
-  Serial.println(send_timer_end - send_timer_start);
-  Serial.println(text_payload);
-  Serial.println("-----------------");
-  */
 
   while(1){
     delayMicroseconds(WRITE_SPEED);
@@ -169,8 +112,7 @@ void TaskTransmitV2(void *pvParameters){
 
       byte_progress = 0;
       crc = 0;
-        
-
+      
       //Serial.print("Message done sending in ");
       //Serial.print(send_timer_end - send_timer_start);
       //Serial.println(" us.");
@@ -185,6 +127,11 @@ void TaskTransmitV2(void *pvParameters){
   } // thread's While()
   
 }
+
+//-----------------------------------------
+//-------------- Interrupt ----------------
+//-----------------------------------------
+
 
 void ARDUINO_ISR_ATTR SendBitV2() {
   // mutex start
@@ -214,95 +161,6 @@ void ARDUINO_ISR_ATTR SendBitV2() {
 }
 
 
-//-----------------------------------------
-//--------------- Tasks -------------------
-//-----------------------------------------
-
-void TaskTransmit(void *pvParameters) {
-  char *a_payload = (char *)pvParameters;
-
-  digitalWrite(SEND_PIN, 0);
-
-  writerSemaphore = xSemaphoreCreateBinary();
-  // Set timer frequency to 1Mhz
-  timer = timerBegin(1000000);  //
-
-  timerAttachInterrupt(timer, &SendBit);
-
-  // Set alarm to call onTimer function every second (value in microseconds).
-  // Repeat the alarm (third parameter) with unlimited count = 0 (fourth parameter).
-  timerAlarm(timer, WRITE_SPEED, false, 0);
-
-  const char text_payload[80] = "This is a testing message. It doesnt mean anything, it just need to use 80 char";
-  int writer_state = 0; // wait, load, send
-  unsigned long send_timer_start = 0;
-  unsigned long send_timer_end = 0;
-
-  delay(1000);
-  while (1) {
-    delayMicroseconds(20);
-    //delay(1);  // prevent watchdog from freaking out
-
-    if(writer_state == 0){
-      //Serial.println("Ready to send message");
-      send_timer_start = micros();
-      writer_state = 1;
-      //Serial.println("WRITER STATE: 0 -> 1");
-
-    }
-    else if(writer_state == 1){
-      //Serial.println("Sending message");
-      
-      LoadMessage(a_payload, text_payload);
-      timerRestart(timer);
-      timerAlarm(timer, WRITE_SPEED, true, 0);  // 176 byte * 8 bits = 1408 bits
-
-      Serial.println(micros() - send_timer_start);
-      writer_state = 2;
-      //Serial.println("WRITER STATE: 1 -> 2");
-    }
-    else if(writer_state == 2){
-
-      if (xSemaphoreTake(writerSemaphore, 0) == pdTRUE){
-        timerAlarm(timer, WRITE_SPEED, false, 0);
-        //write_bit_index = 0;
-        writer_state = 3;
-        //Serial.println("WRITER STATE: 2 -> 3");
-      }
-
-      //if (write_bit_index >= 1408){
-      //  timerAlarm(timer, WRITE_SPEED, false, 0);
-      //  write_bit_index = 0;
-      //  writer_state = 3;
-      //  //Serial.println("WRITER STATE: 2 -> 3");
-      //}
-    }
-    else if(writer_state == 3){
-      send_timer_end = micros();
-
-      timerAlarm(timer, WRITE_SPEED, false, 0);
-
-      //Serial.print("Message done sending in ");
-      //Serial.print(send_timer_end - send_timer_start);
-      //Serial.println(" us.");
-
-      digitalWrite(SEND_PIN, 0);
-
-      delay(3000);
-
-      writer_state = 0;
-      Serial.println("WRITER STATE: 3 -> 0");
-    }
-
-
-  }
-}
-
-
-//-----------------------------------------
-//-------------- Interrupt ----------------
-//-----------------------------------------
-
 void ARDUINO_ISR_ATTR SendBit() {
   // mutex start
   int byte_index = (write_bit_index >> 3);  // last 3 bits are used to count the bit position
@@ -331,9 +189,6 @@ void ARDUINO_ISR_ATTR SendBit() {
 //------------- Functions -----------------
 //-----------------------------------------
 
-static inline void InitializePayload(char *payload_w){
-
-}
 
 static inline void ComputeCRC(char *payload_w) {
   const int start_i = 10;  // data payload start at byte 5*2=10

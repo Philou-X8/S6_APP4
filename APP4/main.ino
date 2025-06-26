@@ -10,11 +10,7 @@
 #define SEND_PIN 25
 #define READ_PIN 26
 
-//#define WRITE_SPEED 500 * 1000
-
 hw_timer_t *timer = NULL;
-//wdt_hal_context_t rtc_wdt_ctx = RWDT_HAL_CONTEXT_DEFAULT();
-
 void TaskTransmit(void *pvParameters);
 void TaskReceive(void *pvParameters);
 

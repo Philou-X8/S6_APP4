@@ -52,7 +52,7 @@ void TaskReceive(void *pvParameters) {
     delayMicroseconds(3);
     //delay(1);
 
-    if (reader_state == 0) {
+    if (reader_state == 0) { // sync clock
       if (xSemaphoreTake(LockState_0_1, 0) == pdTRUE){
         //detachInterrupt(digitalPinToInterrupt(READ_PIN));
         read_timer_start = micros();
@@ -61,7 +61,7 @@ void TaskReceive(void *pvParameters) {
       read_timer_start = micros();
 
     } 
-    else if (reader_state == 1) {
+    else if (reader_state == 1) { // start searching for Start flag
       // detach interrupt
       detachInterrupt(digitalPinToInterrupt(READ_PIN));
       attachInterrupt(digitalPinToInterrupt(READ_PIN), InterruptRead, CHANGE);
@@ -73,7 +73,7 @@ void TaskReceive(void *pvParameters) {
 
       reader_state = 2;
     } 
-    else if (reader_state == 2) {
+    else if (reader_state == 2) { // wait for end of start flag
       //int temp_buffer = read_buffer;
       //int temp_buffer_size = read_buffer_size;
 
@@ -104,7 +104,7 @@ void TaskReceive(void *pvParameters) {
         reader_state = 4; 
       }
     } 
-    else if (reader_state == 3) {  // just read for now, we'll parse later
+    else if (reader_state == 3) { // read transmission and fill the byte buffer
       if (read_buffer_size >= 8) {
         int temp = read_buffer >> (read_buffer_size - 8);
         message_buff[message_buff_index] = (char)temp;
@@ -125,7 +125,7 @@ void TaskReceive(void *pvParameters) {
         reader_state = 4;
       } 
     }
-    else if (reader_state == 4){ // parse the message and shit
+    else if (reader_state == 4) { // parse the message and check CRC
       // stop reading the pin
       detachInterrupt(digitalPinToInterrupt(READ_PIN));
 
@@ -162,13 +162,13 @@ void TaskReceive(void *pvParameters) {
       attachInterrupt(digitalPinToInterrupt(READ_PIN), InterruptIdle, CHANGE);
       reader_state = 5; 
     }
-    else if (reader_state == 5){
+    else if (reader_state == 5) { // IDLE
       if (xSemaphoreTake(LockState_5_6, 0) == pdTRUE){
         //detachInterrupt(digitalPinToInterrupt(READ_PIN));
         reader_state = 6;
       }
     }
-    else if (reader_state == 6){
+    else if (reader_state == 6) { // reset system and return to sync state
       callibrate_counter = 0;
       detachInterrupt(digitalPinToInterrupt(READ_PIN));
       attachInterrupt(digitalPinToInterrupt(READ_PIN), InterruptSync, RISING);
@@ -197,34 +197,6 @@ void InterruptIdle(){
   reader_state = 6;
 }
 
-void InterruptSync_Old() {  // must call on rising edge
-
-  if (callibrate_counter == 1) {
-    calib_start = timerReadMicros(read_timer);
-    //calib_start = micros();
-  } 
-  else if (callibrate_counter == 3) {
-    calib_end = timerReadMicros(read_timer);
-    //calib_end = micros();
-
-
-    //read_priode = (calib_end - calib_start);
-    //read_max_delay = (read_priode >> 3) + (read_priode >> 4); // 1/8 + 1/16 = 3/16
-    //Serial.print("read_max_delay = ");
-    //Serial.println(read_max_delay);
-  } 
-  else if (callibrate_counter == 4) {
-    //if(reader_state == 0){
-
-      //Serial.println("changing from state 0 to state 1");
-      //reader_state = 1;
-    //}
-  }
-
-  //Serial.println(callibrate_counter);
-  callibrate_counter += 1;
-}
-
 void InterruptSync() {  // must call on rising edge
 
   if (callibrate_counter == 1) {
@@ -250,19 +222,13 @@ void InterruptSync() {  // must call on rising edge
 //volatile int pin_state = 0;
 void InterruptRead() {
 
-  //pin_state = !pin_state;
-  
   if ((micros() - last_bit_time) > read_max_delay){
   //if ((timerReadMicros(read_timer) - last_bit_time) > read_max_delay){
     //last_bit_time = micros();
 
     // shift the read_buffer once to make room, then add the new bit to the left
     read_buffer = (read_buffer << 1) | ((GPIO.in >> READ_PIN) & 0x1);
-    //read_buffer = (read_buffer << 1) | (pin_state & 0x1);
-
-
     read_buffer_size++; // size of the read buffer
-    //total_bit_counter++;
 
     if(reader_state == 2){
       if( (read_buffer & 0x7) == 0x6){
@@ -273,7 +239,6 @@ void InterruptRead() {
       }
     }
 
-    //last_bit_time = timerReadMicros(read_timer);
     last_bit_time = micros();
 
     //((GPIO.in >> READ_PIN) & 0x1) ? Serial.println("detect 1") : Serial.println("detect 0");
@@ -284,7 +249,6 @@ void InterruptRead() {
 //------------- Functions -----------------
 //-----------------------------------------
 
-// TODO: ADJUST INDEX FOR MESSAGE BUFFER <------------------------------------- TODO
 static inline int CheckCRC(const char *a_payload) {
   const int start_i = 3;  // data payload start at byte 5
   const int end_i = 83;   // data payload end at byte 5
