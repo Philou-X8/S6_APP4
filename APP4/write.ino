@@ -7,7 +7,7 @@
 #define SEND_PIN 25
 #define READ_PIN 26
 
-#define WRITE_SPEED 11 // time in us. (micro sec)
+#define WRITE_SPEED 13 // time in us. (micro sec)
 
 
 volatile int write_bit_index = 0;
